@@ -62,6 +62,13 @@
 #include <AccelStepper.h>  //include the stepper motor library
 #include <MultiStepper.h>  //include multiple stepper motor library
 #include <RPC.h>
+#include <List.hpp>
+
+// Create lists for moving averages
+int* frontLidarArr = new int[6];
+int* backLidarArr = new int[6];
+int* leftLidarArr = new int[6];
+int* rightLidarArr = new int[6];
 
 //state LEDs connections
 #define redLED 5            //red LED for displaying states
@@ -93,7 +100,7 @@ struct sensor_data read_sensors() {
 }
 // reads a lidar given a pin
 int read_lidar(int pin) {
-  int16_t t = pulseIn(pin, HIGH, 2000);
+  int16_t t = pulseIn(pin, HIGH);
   int d; //distance to  object
   if (t == 0){
     // pulseIn() did not detect the start of a pulse within 1 second.
@@ -115,6 +122,24 @@ int read_lidar(int pin) {
   // Serial.print(" cm, ");
   return d;
 }
+
+int movingAverage(int arr[], int arrSize) {
+  int sum = 0;
+  for (int i = 0; i < arrSize; i++) {
+    sum += arr[i];
+  }
+  return sum / arrSize;
+}
+
+int* shiftArray(int arr[], int arrSize, int newValue) {
+  for (int i = arrSize - 1; i > 0; i--) {
+    arr[i] = arr[i - 1];
+  }
+  arr[0] = newValue;
+
+  return arr;
+}
+
 void setupM4() {
   // bind a method to return the lidar data all at once
   RPC.bind("read_sensors", read_sensors);
@@ -123,10 +148,27 @@ void loopM4() {
   // update the struct with current lidar data
 
   struct sensor_data data;
-  data.lidar_front = read_lidar(8);
-  data.lidar_back = read_lidar(9);
-  data.lidar_left = read_lidar(10);
-  data.lidar_right = read_lidar(11);
+
+  int lidarFrontCurr = read_lidar(8);
+  int lidarBackCurr = read_lidar(9);
+  int lidarLeftCurr = read_lidar(10);
+  int lidarRightCurr = read_lidar(11);
+  
+  frontLidarArr = shiftArray(frontLidarArr, 6, lidarFrontCurr);
+  backLidarArr = shiftArray(backLidarArr, 6, lidarBackCurr);
+  leftLidarArr = shiftArray(leftLidarArr, 6, lidarLeftCurr);
+  rightLidarArr = shiftArray(rightLidarArr, 6, lidarRightCurr);
+
+  data.lidar_front = movingAverage(frontLidarArr, 6);
+  data.lidar_back = movingAverage(backLidarArr, 6);
+  data.lidar_left = movingAverage(leftLidarArr, 6);
+  data.lidar_right = movingAverage(rightLidarArr, 6);
+
+  // data.lidar_front = read_lidar(8);
+  // data.lidar_back = read_lidar(9);
+  // data.lidar_left = read_lidar(10);
+  // data.lidar_right = read_lidar(11);
+
   sensors = data;
 }
 
@@ -432,25 +474,20 @@ void randomWander(int behavior) {
 }
 
 void collide(void) {
-  /*
   digitalWrite(grnLED, LOW);      //turn on green LED
   digitalWrite(ylwLED, LOW);       //turn off yellow LED
   digitalWrite(redLED, HIGH);       //turn off red LED
 
-  stepperRight.setSpeed(200);  //set right motor speed
-  stepperLeft.setSpeed(200);   //set left motor speed  
+  stepperRight.setSpeed(300);  //set right motor speed
+  stepperLeft.setSpeed(300);   //set left motor speed  
 
-  if (lidarTimer < millis() - LIDAR_POLL_TIME) {
-    run = true;
-    lidarTimer = millis();
-    for (int i = 0;i<4;i++){
-      int dist = readLidar(i);
-      if (dist <= 10) {
-        run = false;
-      }
-    }
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  run = true;
+
+  if (sensors.lidar_front <= 10 || sensors.lidar_back <= 10 || sensors.lidar_left <= 10 || sensors.lidar_right <= 10) {
+    run = false;
   }
-
   // for (int i = 0;i<1;i++){
   //   if (readSonar(i) <= 10) {
   //     run = false;
@@ -460,7 +497,7 @@ void collide(void) {
   if (run) {
     runAtSpeed();
     // Serial.println("run");
-  }*/
+  }
 }
 
 void runaway(void) {
@@ -468,7 +505,7 @@ void runaway(void) {
   digitalWrite(ylwLED, HIGH);       //turn off yellow LED
   digitalWrite(redLED, LOW);       //turn off red LED
 
-  int maxSpeed = 250;
+  int maxSpeed = 300;
   int rightSpeed;
   int leftSpeed;
   int x;
@@ -476,10 +513,10 @@ void runaway(void) {
 
   sensors = RPC.call("read_sensors").as<struct sensor_data>();
 
-  Serial.print("front = ");
-  Serial.print(sensors.lidar_front);
-  Serial.print(" back = ");
-  Serial.println(sensors.lidar_back);
+  // Serial.print("front = ");
+  // Serial.print(sensors.lidar_front);
+  // Serial.print(" back = ");
+  // Serial.println(sensors.lidar_back);
 
   if (abs(sensors.lidar_back) < 30 && abs(sensors.lidar_front) < 30) {
     x = sensors.lidar_front - sensors.lidar_back; // x direction of repulsive vector
@@ -503,40 +540,43 @@ void runaway(void) {
 
   int angle = atan2(y,x) * 180 / 3.1415;
 
-  // Serial.print("x = ");
-  // Serial.print(x);
-  // Serial.print(" y = ");
-  // Serial.print(y);
-  // Serial.print(" angle = ");
-  // Serial.println(angle);
+  Serial.print("x = ");
+  Serial.print(x);
+  Serial.print(" y = ");
+  Serial.print(y);
+  Serial.print(" angle = ");
+  Serial.println(angle);
 
-  // if (abs(x) > 10  || abs (y) > 10) {
-  //   if (angle > -45 && angle <= 45) {
-  //     rightSpeed = maxSpeed;
-  //     leftSpeed = maxSpeed;
-  //   } else if ((angle > 45 && angle <= 90) || (angle > -135 && angle <= -90)) {
-  //     rightSpeed = maxSpeed;
-  //     leftSpeed = -maxSpeed;
-  //   } else if ((angle > -90 && angle <= -45) || (angle > 90 && angle <= 135)) {
-  //     rightSpeed = -maxSpeed;
-  //     leftSpeed = maxSpeed;
-  //   } else {
-  //     rightSpeed = -maxSpeed;
-  //     leftSpeed = -maxSpeed;
-  //   }
-  // } else {
-  //   rightSpeed = 0;
-  //   leftSpeed = 0;
-  // }
   if (abs(x) > 10  || abs (y) > 10) {
-    if (angle <= 90 && angle >= -90) {
-      rightSpeed = maxSpeed * abs((angle + 90)) / 180; 
-      leftSpeed = maxSpeed * abs((angle - 90)) / 180;
+    if (angle > -45 && angle <= 45) {
+      rightSpeed = maxSpeed;
+      leftSpeed = maxSpeed;
+    } else if ((angle > 45 && angle <= 90) || (angle > -135 && angle < -90)) {
+      rightSpeed = maxSpeed;
+      leftSpeed = 0;
+    } else if ((angle >= -90 && angle <= -45) || (angle > 90 && angle <= 135)) {
+      rightSpeed = 0;
+      leftSpeed = maxSpeed;
     } else {
-      rightSpeed = -maxSpeed * abs((angle + 90)) / 180; 
-      leftSpeed = -maxSpeed * abs((angle - 90)) / 180;
+      rightSpeed = -maxSpeed;
+      leftSpeed = -maxSpeed;
     }
+  } else if (abs(sensors.lidar_left) > 0 && abs(sensors.lidar_left) < 30 && abs(sensors.lidar_right) > 0 && abs(sensors.lidar_right) < 30 && abs(x) < 2 ) {
+    rightSpeed = maxSpeed;
+    leftSpeed = maxSpeed;
+  } else {
+    rightSpeed = 0;
+    leftSpeed = 0;
   }
+  // if (abs(x) > 10  || abs (y) > 10) {
+  //   if (angle <= 90 && angle >= -90) {
+  //     rightSpeed = maxSpeed * abs((angle + 90)) / 180; 
+  //     leftSpeed = maxSpeed * abs((angle - 90)) / 180;
+  //   } else {
+  //     rightSpeed = -maxSpeed * abs((angle + 90)) / 180; 
+  //     leftSpeed = -maxSpeed * abs((angle - 90)) / 180;
+  //   }
+  // }
 
   stepperRight.setSpeed(rightSpeed);  //set right motor speed
   stepperLeft.setSpeed(leftSpeed);   //set left motor speed  
@@ -584,12 +624,12 @@ void loopM7() {
   //Uncomment to read Encoder Data (uncomment to read on serial monitor)
   // print_encoder_data();   //prints encoder data
 
-  //collide();
+  collide();
 
   //sensors = RPC.call("read_sensors").as<struct sensor_data>();
   //Serial.println(sensors.lidar_back);
 
-  runaway();
+  //runaway();
 
   //delay(wait_time);               //wait to move robot or read data
 }
