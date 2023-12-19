@@ -65,10 +65,13 @@
 #include <List.hpp>
 
 // Create lists for moving averages
+#define SONAR_ARR_SIZE 10
 int* frontLidarArr = new int[6];
 int* backLidarArr = new int[6];
 int* leftLidarArr = new int[6];
 int* rightLidarArr = new int[6];
+int* leftSonarArr = new int[SONAR_ARR_SIZE];
+int* rightSonarArr = new int[SONAR_ARR_SIZE];
 
 //state LEDs connections
 #define redLED 5            //red LED for displaying states
@@ -84,14 +87,71 @@ int leds[3] = { 5, 6, 7 };  //array of LED pin numbers
 #define ltStepPin 52      //left stepper motor step pin
 #define ltDirPin 53       //left stepper motor direction pin
 
+//define the Lidar constants
+#define LIDAR_FRONT 0
+#define LIDAR_BACK 1
+#define LIDAR_LEFT 2
+#define LIDAR_RIGHT 3
+#define numOfSens 4
+
+//define the behavior constants
+#define NO_BEHAVIOR 0
+#define COLLIDE 1
+
+//define the Lidar variables
+int16_t ft_lidar = 8;
+int16_t bk_lidar = 9;
+int16_t lt_lidar = 10;
+int16_t rt_lidar = 11;
+int16_t lidar_pins[numOfSens] = {8,9,10,11};
+int16_t lidarDist[numOfSens] = {0,0,0,0};
+
+//define the Sonar constants
+#define VELOCITY_TEMP(temp) ((331.5 + 0.6 * (float)(temp)) * 100 / 1000000.0)  // The ultrasonic velocity (cm/us) compensated by temperature
+#define SONAR_RIGHT 0
+#define SONAR_LEFT 1
+
+//define the Sonar variables
+int16_t rt_trigechoPin = 3;
+int16_t lt_trigechoPin = 4;
+int16_t trig_EchoPin[2] = { 3,4 };
+int16_t sonarDist[2] = {0,0};
+
+AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);  //create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
+AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);   //create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
+MultiStepper steppers;                                                 //create instance to control multiple steppers at the same time
+
+#define stepperEnTrue false  //variable for enabling stepper motor
+#define stepperEnFalse true  //variable for disabling stepper motor
+
+int pauseTime = 2500;  //time before robot moves
+int stepTime = 500;    //delay time between high and low on step pin
+int wait_time = 1000;  //delay for printing data
+
+#define WANDER_TIME 4000 //time between change of wander wheel speeds in millis
+int wanderTimer = 0; //timer to determine when to change wander wheel speeds
+
+//define encoder pins
+#define LEFT 0                        //left encoder
+#define RIGHT 1                       //right encoder
+const int ltEncoder = 18;             //left encoder pin (Mega Interrupt pins 2,3 18,19,20,21)
+const int rtEncoder = 19;             //right encoder pin (Mega Interrupt pins 2,3 18,19,20,21)
+volatile long encoder[2] = { 0, 0 };  //interrupt variable to hold number of encoder counts (left, right)
+int lastSpeed[2] = { 0, 0 };          //variable to hold encoder speed (left, right)
+int accumTicks[2] = { 0, 0 };         //variable to hold accumulated ticks since last reset
+
+bool run = false;
+
 struct sensor_data {
   // this can easily be extended to contain sonar data as well
   int lidar_front;
   int lidar_back;
   int lidar_left;
   int lidar_right;
+  int sonar_left;
+  int sonar_right;
   // this defines some helper functions that allow RPC to send our struct (I found this on a random forum)
-  MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right)
+  MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right, sonar_left, sonar_right)
 } sensors;
 
 // read_lidars is the function used to get lidar data to the M7
@@ -164,68 +224,17 @@ void loopM4() {
   data.lidar_left = movingAverage(leftLidarArr, 6);
   data.lidar_right = movingAverage(rightLidarArr, 6);
 
-  // data.lidar_front = read_lidar(8);
-  // data.lidar_back = read_lidar(9);
-  // data.lidar_left = read_lidar(10);
-  // data.lidar_right = read_lidar(11);
+  int sonarLeftCurr = readSonar(SONAR_LEFT);
+  int sonarRightCurr = readSonar(SONAR_RIGHT);
+
+  leftSonarArr = shiftArray(leftSonarArr, SONAR_ARR_SIZE, sonarLeftCurr);
+  rightSonarArr = shiftArray(rightSonarArr, SONAR_ARR_SIZE, sonarRightCurr);
+
+  data.sonar_left = movingAverage(leftSonarArr, SONAR_ARR_SIZE);
+  data.sonar_right = movingAverage(rightSonarArr, SONAR_ARR_SIZE);
 
   sensors = data;
 }
-
-//define the Lidar constants
-#define LIDAR_FRONT 0
-#define LIDAR_BACK 1
-#define LIDAR_LEFT 2
-#define LIDAR_RIGHT 3
-#define numOfSens 4
-
-//define the behavior constants
-#define NO_BEHAVIOR 0
-#define COLLIDE 1
-
-//define the Lidar variables
-int16_t ft_lidar = 8;
-int16_t bk_lidar = 9;
-int16_t lt_lidar = 10;
-int16_t rt_lidar = 11;
-int16_t lidar_pins[numOfSens] = {8,9,10,11};
-int16_t lidarDist[numOfSens] = {0,0,0,0};
-
-//define the Sonar constants
-#define VELOCITY_TEMP(temp) ((331.5 + 0.6 * (float)(temp)) * 100 / 1000000.0)  // The ultrasonic velocity (cm/us) compensated by temperature
-#define SONAR_RIGHT 0
-#define SONAR_LEFT 1
-
-//define the Sonar variables
-int16_t rt_trigechoPin = 3;
-int16_t lt_trigechoPin = 4;
-int16_t trig_EchoPin[2] = { 3,4 };
-int16_t sonarDist[2] = {0,0};
-
-AccelStepper stepperRight(AccelStepper::DRIVER, rtStepPin, rtDirPin);  //create instance of right stepper motor object (2 driver pins, low to high transition step pin 52, direction input pin 53 (high means forward)
-AccelStepper stepperLeft(AccelStepper::DRIVER, ltStepPin, ltDirPin);   //create instance of left stepper motor object (2 driver pins, step pin 50, direction input pin 51)
-MultiStepper steppers;                                                 //create instance to control multiple steppers at the same time
-
-#define stepperEnTrue false  //variable for enabling stepper motor
-#define stepperEnFalse true  //variable for disabling stepper motor
-
-int pauseTime = 2500;  //time before robot moves
-int stepTime = 500;    //delay time between high and low on step pin
-int wait_time = 1000;  //delay for printing data
-
-#define LIDAR_POLL_TIME 500 //time between lidar polls in miseconds
-int lidarTimer = 0; //timer to determine when to poll lidar sensors
-
-//define encoder pins
-#define LEFT 0                        //left encoder
-#define RIGHT 1                       //right encoder
-const int ltEncoder = 18;             //left encoder pin (Mega Interrupt pins 2,3 18,19,20,21)
-const int rtEncoder = 19;             //right encoder pin (Mega Interrupt pins 2,3 18,19,20,21)
-volatile long encoder[2] = { 0, 0 };  //interrupt variable to hold number of encoder counts (left, right)
-int lastSpeed[2] = { 0, 0 };          //variable to hold encoder speed (left, right)
-int accumTicks[2] = { 0, 0 };         //variable to hold accumulated ticks since last reset
-
-bool run = false;
 
 // Helper Functions
 
@@ -316,31 +325,12 @@ void runAtSpeed() {
 /*This function, runToStop(), will run the robot until the target is achieved and
    then stop it
 */
-void runToStop(int behavior) {
-  /*
+void runToStop() {
   int runNow = 1;
   int rightStopped = 0;
   int leftStopped = 0;
 
   while (runNow) {
-    if (behavior == 1){
-      for (int i = 0;i<4;i++){
-        if (readLidar(i) <= 5) {
-          leftStopped = 1;
-          stepperLeft.stop();  //stop left motor
-          rightStopped = 1;
-          stepperRight.stop();  //stop right motor
-        }
-      }
-      for (int i = 0;i<2;i++){
-        if (readSonar(i) <= 5) {
-          leftStopped = 1;
-          stepperLeft.stop();  //stop left motor
-          rightStopped = 1;
-          stepperRight.stop();  //stop right motor
-        }
-      }
-    }
     if (!stepperRight.run()) {
       rightStopped = 1;
       stepperRight.stop();  //stop right motor
@@ -352,14 +342,14 @@ void runToStop(int behavior) {
     if (rightStopped && leftStopped) {
       runNow = 0;
     }
-  }*/
+  }
 }
 
 
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
-void spin(int angle, int dir, int behavior) {
+void spin(int angle, int dir) {
   int steps = angle * 5.585;
   if (dir) {
     stepperLeft.move(steps);    //move one full rotation forward relative to current position
@@ -368,13 +358,13 @@ void spin(int angle, int dir, int behavior) {
     stepperRight.move(steps);  //move one full rotation forward relative to current position
     stepperLeft.move(-steps);  //move one full rotation forward relative to current position
   }
-  runToStop(behavior);  //run until the robot reaches the target
+  runToStop();  //run until the robot reaches the target
 }
 
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
-void pivot(int angle, int dir, int behavior) {
+void pivot(int angle, int dir) {
   int steps = angle * 5.585 * 2;
   if (dir) {
     stepperLeft.move(steps);  //move steps
@@ -382,13 +372,13 @@ void pivot(int angle, int dir, int behavior) {
     stepperRight.move(steps);
   }
 
-  runToStop(behavior);  //run until the robot reaches the target
+  runToStop();  //run until the robot reaches the target
 }
 
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
-void turn(int time, int dir, int behavior) {
+void turn(int time, int dir) {
   int steps = time * 500;
 
   if (dir) {
@@ -403,28 +393,28 @@ void turn(int time, int dir, int behavior) {
     stepperLeft.move(steps / 2);  //move one full rotation forward relative to current position
   }
 
-  runToStop(behavior);  //run until the robot reaches the target
+  runToStop();  //run until the robot reaches the target
   init_stepper();
 }
 
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
-void forward(int steps, int behavior) {
+void forward(int steps) {
   // int steps = distance / 0.034375; // for distance in cm
   stepperRight.move(steps);  //move steps forward relative to current position
   stepperLeft.move(steps);   //move steps forward relative to current position
 
-  runToStop(behavior);               //run until the robot reaches the target
+  runToStop();               //run until the robot reaches the target
 }
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
 */
-void reverse(int distance, int behavior) {
+void reverse(int distance) {
   int steps = distance / 0.034375;
   stepperRight.move(-steps);  //move one full rotation reverse relative to current position
   stepperLeft.move(-steps);   //move one full rotation reverse relative to current position
-  runToStop(behavior);                //run until the robot reaches the target
+  runToStop();                //run until the robot reaches the target
 }
 /*
   INSERT DESCRIPTION HERE, what are the inputs, what does it do, functions used
@@ -457,54 +447,52 @@ uint16_t readSonar(uint16_t side) {
   return distance;
 }
 
-void randomWander(int behavior) {
+void randomWander() {
   digitalWrite(grnLED, HIGH);      //turn on green LED
-  digitalWrite(ylwLED, LOW);       //turn off yellow LED
-  digitalWrite(redLED, LOW);       //turn off red LED
 
-  int angle = random(20, 180);
-  int dir = random(0,2);
+    stepperRight.setSpeed(300);  //set right motor speed
+    stepperLeft.setSpeed(300);   //set left motor speed
 
-  spin(angle, dir, behavior);
+  if (millis() - wanderTimer > WANDER_TIME) {
+    spin(random(30, 180), random(0,2));  
 
-  int distance = random(4000);
+    wanderTimer = millis();
+  }
 
-  forward(distance, behavior);
+  runAtSpeed(); 
+
+  // int angle = random(20, 180);
+  // int dir = random(0,2);
+
+  // spin(angle, dir);
+
+  // int distance = random(2000);
+
+  // forward(distance);
 
 }
 
 void collide(void) {
-  digitalWrite(grnLED, LOW);      //turn on green LED
-  digitalWrite(ylwLED, LOW);       //turn off yellow LED
-  digitalWrite(redLED, HIGH);       //turn off red LED
-
-  stepperRight.setSpeed(300);  //set right motor speed
-  stepperLeft.setSpeed(300);   //set left motor speed  
+  stepperRight.setSpeed(500);  //set right motor speed
+  stepperLeft.setSpeed(500);   //set left motor speed  
 
   sensors = RPC.call("read_sensors").as<struct sensor_data>();
 
   run = true;
 
-  if (sensors.lidar_front <= 10 || sensors.lidar_back <= 10 || sensors.lidar_left <= 10 || sensors.lidar_right <= 10) {
+  if (sensors.lidar_front <= 15 || sensors.lidar_back <= 15 || sensors.lidar_left <= 15 || sensors.lidar_right <= 15) {
     run = false;
+    digitalWrite(redLED, HIGH);       //turn on red LED
   }
-  // for (int i = 0;i<1;i++){
-  //   if (readSonar(i) <= 10) {
-  //     run = false;
-  //   }
-  // }
 
   if (run) {
     runAtSpeed();
+    digitalWrite(redLED, LOW);       //turn off red LED
     // Serial.println("run");
   }
 }
 
 void runaway(void) {
-  digitalWrite(grnLED, LOW);      //turn on green LED
-  digitalWrite(ylwLED, HIGH);       //turn off yellow LED
-  digitalWrite(redLED, LOW);       //turn off red LED
-
   int maxSpeed = 300;
   int rightSpeed;
   int leftSpeed;
@@ -513,10 +501,10 @@ void runaway(void) {
 
   sensors = RPC.call("read_sensors").as<struct sensor_data>();
 
-  // Serial.print("front = ");
-  // Serial.print(sensors.lidar_front);
-  // Serial.print(" back = ");
-  // Serial.println(sensors.lidar_back);
+  // Serial.print("left = ");
+  // Serial.print(sensors.sonar_left);
+  // Serial.print(" right = ");
+  // Serial.println(sensors.sonar_right);
 
   if (abs(sensors.lidar_back) < 30 && abs(sensors.lidar_front) < 30) {
     x = sensors.lidar_front - sensors.lidar_back; // x direction of repulsive vector
@@ -547,27 +535,34 @@ void runaway(void) {
   Serial.print(" angle = ");
   Serial.println(angle);
 
-  if (abs(x) > 10  || abs (y) > 10) {
+  if (abs(x) > 10 || abs (y) > 10) {
+    digitalWrite(ylwLED, HIGH);       //turn on yellow LED
     if (angle > -45 && angle <= 45) {
       rightSpeed = maxSpeed;
       leftSpeed = maxSpeed;
     } else if ((angle > 45 && angle <= 90) || (angle > -135 && angle < -90)) {
       rightSpeed = maxSpeed;
-      leftSpeed = 0;
+      leftSpeed = -maxSpeed/2;
     } else if ((angle >= -90 && angle <= -45) || (angle > 90 && angle <= 135)) {
-      rightSpeed = 0;
+      rightSpeed = -maxSpeed/2;
       leftSpeed = maxSpeed;
     } else {
       rightSpeed = -maxSpeed;
       leftSpeed = -maxSpeed;
     }
-  } else if (abs(sensors.lidar_left) > 0 && abs(sensors.lidar_left) < 30 && abs(sensors.lidar_right) > 0 && abs(sensors.lidar_right) < 30 && abs(x) < 2 ) {
+  } else if (sensors.lidar_left > 0 && sensors.lidar_left < 30 && sensors.lidar_right > 0 && sensors.lidar_right < 30 && abs(x) < 4 ) {
+    digitalWrite(ylwLED, HIGH);       //turn on yellow LED
     rightSpeed = maxSpeed;
     leftSpeed = maxSpeed;
+  } else if (sensors.lidar_front > 0 && sensors.lidar_front < 30 && sensors.lidar_back > 0 && sensors.lidar_back < 30 &&  sensors.lidar_left > 30 && sensors.lidar_right > 30) {
+    digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+    spin(90, 0);
   } else {
+    digitalWrite(ylwLED, LOW);       //turn off yellow LED
     rightSpeed = 0;
     leftSpeed = 0;
   }
+
   // if (abs(x) > 10  || abs (y) > 10) {
   //   if (angle <= 90 && angle >= -90) {
   //     rightSpeed = maxSpeed * abs((angle + 90)) / 180; 
@@ -578,10 +573,175 @@ void runaway(void) {
   //   }
   // }
 
+  // float mag = 200;
+  // if(angle < 0) {
+  // mag *= -1;
+  // angle += 180;
+  // }
+  // float left_power = mag * max(-1, 1 - angle/45);
+  // float right_power = mag * min(1, 3 - angle/45);
+
   stepperRight.setSpeed(rightSpeed);  //set right motor speed
   stepperLeft.setSpeed(leftSpeed);   //set left motor speed  
 
   runAtSpeed(); 
+}
+
+void follow(void) {
+  digitalWrite(redLED, HIGH);       //turn on red LED
+  digitalWrite(grnLED, HIGH);       //turn on green LED
+
+  int maxSpeed = 300;
+  int rightSpeed;
+  int leftSpeed;
+  int x;
+  int y;
+
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  // Serial.print("left = ");
+  // Serial.print(sensors.sonar_left);
+  // Serial.print(" right = ");
+  // Serial.println(sensors.sonar_right);
+
+  // Determine x direction of attractive vector
+  if (sensors.lidar_back < 30){
+    x += -30 + sensors.lidar_back;
+  }
+  if (sensors.lidar_front < 30){
+    x += 30 - sensors.lidar_front;
+  }
+  if (sensors.sonar_left < 20) {
+    x += 20 - sensors.sonar_left;
+  }
+  if (sensors.sonar_right < 20) {
+    x += 20 - sensors.sonar_right;
+  }
+
+  // Determine y direction of attractive vector
+  if (sensors.lidar_right < 30){
+    y += -30 + sensors.lidar_right;
+  }
+  if (sensors.lidar_left < 30){
+    y += 30 - sensors.lidar_left;
+  }
+  if (sensors.sonar_left < 20) {
+    y += 20 - sensors.sonar_left;
+  }
+  if (sensors.sonar_right < 20) {
+    y += -20 + sensors.sonar_right;
+  }
+
+  int angle = atan2(y,x) * 180 / 3.1415;
+
+  Serial.print("x = ");
+  Serial.print(x);
+  Serial.print(" y = ");
+  Serial.print(y);
+  Serial.print(" angle = ");
+  Serial.println(angle);
+  if(abs(y) > 5 || abs(x) > 5) {
+    if (angle > -30 && angle < 30 && abs(x) < 25 ) {
+      rightSpeed = maxSpeed;
+      leftSpeed = maxSpeed;
+      Serial.println("Forward");
+    } else if (angle > -30 && angle < 30 && abs(x) > 35 ) {
+      rightSpeed = -maxSpeed;
+      leftSpeed = -maxSpeed;
+      Serial.println("Backward");
+    } else if (angle >= 30 && angle <= 180) {
+      rightSpeed = maxSpeed;
+      leftSpeed = -maxSpeed;
+      Serial.println("Left");
+    } else if (angle <= -30 && angle >= -180) {
+      rightSpeed = -maxSpeed;
+      leftSpeed = maxSpeed;
+      Serial.println("Right");
+    } else {
+      rightSpeed = 0;
+      leftSpeed = 0;
+    }
+  } else {
+    rightSpeed = 0;
+    leftSpeed = 0;
+  }
+
+  stepperRight.setSpeed(rightSpeed);  //set right motor speed
+  stepperLeft.setSpeed(leftSpeed);   //set left motor speed  
+
+  runAtSpeed(); 
+}
+
+
+#define STATE_WANDER 0
+#define STATE_COLLIDE 1
+#define STATE_RUNAWAY 2
+int state = 0;
+void smartWander(void) {
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+  switch (state) {
+    case STATE_WANDER:
+      digitalWrite(ylwLED, LOW);       //turn off yellow LED
+      Serial.println("wander");
+      randomWander();
+
+      if (sensors.lidar_front < 15 || sensors.lidar_back < 15 || sensors.lidar_right < 15 || sensors.lidar_left < 15 || sensors.sonar_left < 15 || sensors.sonar_left < 15) {
+        state = STATE_COLLIDE;
+      }
+      break;
+    case STATE_COLLIDE:
+      digitalWrite(grnLED, LOW);       //turn off green LED
+      Serial.println("collide");
+      collide();
+      delay(1000);
+      state = STATE_RUNAWAY;
+      break;
+    case STATE_RUNAWAY:
+      digitalWrite(redLED, LOW);       //turn off red LED
+      Serial.println("follow");
+      follow();
+      if (sensors.lidar_front > 20 && sensors.lidar_back > 20 && sensors.lidar_right > 20 && sensors.lidar_left > 20 && sensors.sonar_left > 20 && sensors.sonar_left > 20) {
+        state = STATE_WANDER;
+      }
+      break;
+    default:
+      Serial.println("left state machine");
+      break;
+  }
+}
+
+#define STATE_FOLLOW 3
+void smartFollow(void) {
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+  switch (state) {
+    case STATE_WANDER:
+      digitalWrite(ylwLED, LOW);       //turn off yellow LED
+      Serial.println("wander");
+      randomWander();
+
+      if (sensors.lidar_front < 15 || sensors.lidar_back < 15 || sensors.lidar_right < 15 || sensors.lidar_left < 15) {
+        state = STATE_COLLIDE;
+      }
+      break;
+    case STATE_COLLIDE:
+      digitalWrite(grnLED, LOW);       //turn off green LED
+      Serial.println("collide");
+      collide();
+      delay(1000);
+      state = STATE_FOLLOW;
+      break;
+    case STATE_FOLLOW:
+      digitalWrite(redLED, LOW);       //turn off red LED
+      Serial.println("runaway");
+      runaway();
+      if (sensors.lidar_front > 20 && sensors.lidar_back > 20 && sensors.lidar_right > 20 && sensors.lidar_left > 20) {
+        state = STATE_WANDER;
+      }
+      break;
+    default:
+      Serial.println("left state machine");
+      break;
+  }
 }
 
 void setup() {
@@ -609,8 +769,11 @@ void setupM7() {
   attachInterrupt(digitalPinToInterrupt(rtEncoder), RwheelSpeed, CHANGE);  //init the interrupt mode for the right encoder
 
   for (int i = 0; i<numOfSens;i++){
-    pinMode(lidar_pins[i],OUTPUT);
+    pinMode(lidar_pins[i],INPUT);
   }
+  pinMode(3, INPUT);
+  pinMode(4, INPUT);
+  
 
   Serial.begin(baudrate);  //start serial monitor communication
 
@@ -624,12 +787,16 @@ void loopM7() {
   //Uncomment to read Encoder Data (uncomment to read on serial monitor)
   // print_encoder_data();   //prints encoder data
 
-  collide();
+  //collide();
+
+  // runaway();
+
+  // smartWander();
 
   //sensors = RPC.call("read_sensors").as<struct sensor_data>();
   //Serial.println(sensors.lidar_back);
 
-  //runaway();
+  follow();
 
   //delay(wait_time);               //wait to move robot or read data
 }
