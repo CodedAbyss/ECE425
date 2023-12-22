@@ -744,6 +744,89 @@ void smartFollow(void) {
   }
 }
 
+#define NO_WALL 0
+#define LEFT_WALL 1
+#define RIGHT_WALL 2
+#define CENTER_WALL 3
+void wallFollowBB(void) {
+  int maxSpeed = 300;
+  int rightSpeed;
+  int leftSpeed;
+  int x = 0;
+  int y = 0;
+
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
+    wallSide = CENTER_WALL;
+  } else if (sensors.lidar_left < 30) {
+    wallSide = LEFT_WALL;
+  } else if (sensors.lidar_right < 30) {
+    wallSide = RIGHT_WALL;
+  } else {
+    wallSide = NO_WALL;
+  }
+
+  switch(wallSide) {
+    case NO_WALL:
+      rightSpeed = 0;
+      leftSpeed = 0;
+      break;
+    case LEFT_WALL:
+      if (sensors.lidar_left >= 10 && sensors.lidar_left <= 15){
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed; 
+      } else if (sensors.lidar_left < 10) {
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+        rightSpeed = maxSpeed/2;
+        leftSpeed = maxSpeed;
+      } else {
+        digitalWrite(redLED, HIGH);       //turn on red LED
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed/2;
+      }
+      break;
+    case RIGHT_WALL:
+      if (sensors.lidar_right >= 10 && sensors.lidar_right <= 15){
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed; 
+      } else if (sensors.right_left < 10) {
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed/2;
+      } else {
+        digitalWrite(redLED, HIGH);       //turn on red LED
+        rightSpeed = maxSpeed/2;
+        leftSpeed = maxSpeed;
+      }
+      break;
+    case CENTER_WALL:
+      y = sensors.lidar_left - sensors.lidar_right;
+
+      if (y >= -3 && y <= 3) {
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed;
+      } else if (y > 3) {
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed/2;
+      } else {
+        rightSpeed = maxSpeed/2;
+        leftSpeed = maxSpeed;
+      }
+      break;
+  }
+
+  stepperRight.setSpeed(rightSpeed);  //set right motor speed
+  stepperLeft.setSpeed(leftSpeed);   //set left motor speed
+  runAtSpeed();
+}
+
 void setup() {
   RPC.begin();
   if(HAL_GetCurrentCPUID() == CM7_CPUID) {
@@ -787,15 +870,7 @@ void loopM7() {
   //Uncomment to read Encoder Data (uncomment to read on serial monitor)
   // print_encoder_data();   //prints encoder data
 
-  //collide();
-
-  // runaway();
-
-  // follow();
-
-  // smartWander();
-
-  smartFollow();
+  wallFollowBB();
 
   //delay(wait_time);               //wait to move robot or read data
 }
