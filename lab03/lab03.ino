@@ -224,14 +224,14 @@ void loopM4() {
   data.lidar_left = movingAverage(leftLidarArr, 6);
   data.lidar_right = movingAverage(rightLidarArr, 6);
 
-  int sonarLeftCurr = readSonar(SONAR_LEFT);
-  int sonarRightCurr = readSonar(SONAR_RIGHT);
+  // int sonarLeftCurr = readSonar(SONAR_LEFT);
+  // int sonarRightCurr = readSonar(SONAR_RIGHT);
 
-  leftSonarArr = shiftArray(leftSonarArr, SONAR_ARR_SIZE, sonarLeftCurr);
-  rightSonarArr = shiftArray(rightSonarArr, SONAR_ARR_SIZE, sonarRightCurr);
+  // leftSonarArr = shiftArray(leftSonarArr, SONAR_ARR_SIZE, sonarLeftCurr);
+  // rightSonarArr = shiftArray(rightSonarArr, SONAR_ARR_SIZE, sonarRightCurr);
 
-  data.sonar_left = movingAverage(leftSonarArr, SONAR_ARR_SIZE);
-  data.sonar_right = movingAverage(rightSonarArr, SONAR_ARR_SIZE);
+  // data.sonar_left = movingAverage(leftSonarArr, SONAR_ARR_SIZE);
+  // data.sonar_right = movingAverage(rightSonarArr, SONAR_ARR_SIZE);
 
   sensors = data;
 }
@@ -748,6 +748,7 @@ void smartFollow(void) {
 #define LEFT_WALL 1
 #define RIGHT_WALL 2
 #define CENTER_WALL 3
+int wallSide = NO_WALL;
 void wallFollowBB(void) {
   int maxSpeed = 300;
   int rightSpeed;
@@ -757,14 +758,17 @@ void wallFollowBB(void) {
 
   sensors = RPC.call("read_sensors").as<struct sensor_data>();
 
+  Serial.print("left = ");
+  Serial.print(sensors.lidar_left);
+  Serial.print(" right = ");
+  Serial.println(sensors.lidar_right);
+
   if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
     wallSide = CENTER_WALL;
   } else if (sensors.lidar_left < 30) {
     wallSide = LEFT_WALL;
   } else if (sensors.lidar_right < 30) {
     wallSide = RIGHT_WALL;
-  } else {
-    wallSide = NO_WALL;
   }
 
   switch(wallSide) {
@@ -778,14 +782,14 @@ void wallFollowBB(void) {
         digitalWrite(ylwLED, LOW);       //turn off yellow LED
         rightSpeed = maxSpeed;
         leftSpeed = maxSpeed; 
-      } else if (sensors.lidar_left < 10) {
+      } else if (sensors.lidar_left <= 10) {
         digitalWrite(ylwLED, HIGH);       //turn on yellow LED
-        rightSpeed = maxSpeed/2;
+        rightSpeed = maxSpeed/1.5;
         leftSpeed = maxSpeed;
       } else {
         digitalWrite(redLED, HIGH);       //turn on red LED
         rightSpeed = maxSpeed;
-        leftSpeed = maxSpeed/2;
+        leftSpeed = maxSpeed/1.5;
       }
       break;
     case RIGHT_WALL:
@@ -794,13 +798,13 @@ void wallFollowBB(void) {
         digitalWrite(ylwLED, LOW);       //turn off yellow LED
         rightSpeed = maxSpeed;
         leftSpeed = maxSpeed; 
-      } else if (sensors.right_left < 10) {
+      } else if (sensors.lidar_right < 10) {
         digitalWrite(ylwLED, HIGH);       //turn on yellow LED
         rightSpeed = maxSpeed;
-        leftSpeed = maxSpeed/2;
+        leftSpeed = maxSpeed/1.5;
       } else {
         digitalWrite(redLED, HIGH);       //turn on red LED
-        rightSpeed = maxSpeed/2;
+        rightSpeed = maxSpeed/1.5;
         leftSpeed = maxSpeed;
       }
       break;
@@ -820,6 +824,112 @@ void wallFollowBB(void) {
         leftSpeed = maxSpeed;
       }
       break;
+  }
+
+  stepperRight.setSpeed(rightSpeed);  //set right motor speed
+  stepperLeft.setSpeed(leftSpeed);   //set left motor speed
+  runAtSpeed();
+}
+
+float prop = 0;
+void wallFollowProp(void) {
+  int maxSpeed = 300;
+  int frontTurnDist = 15;
+  int rightSpeed;
+  int leftSpeed;
+  int x = 0;
+  int y = 0;
+  int error = 0;
+  float kp = 15;
+
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  Serial.print("left = ");
+  Serial.print(sensors.lidar_left);
+  Serial.print(" right = ");
+  Serial.println(sensors.lidar_right);
+
+  if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
+    wallSide = CENTER_WALL;
+  } else if (sensors.lidar_left < 30) {
+    wallSide = LEFT_WALL;
+  } else if (sensors.lidar_right < 30) {
+    wallSide = RIGHT_WALL;
+  }
+
+  switch(wallSide) {
+    case NO_WALL:
+      rightSpeed = 0;
+      leftSpeed = 0;
+      break;
+    case LEFT_WALL:
+      if (sensors.lidar_left >= 10 && sensors.lidar_left <= 15){
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed; 
+      } else if (sensors.lidar_left <= 10) {
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+        error = min(10 - sensors.lidar_left, 10);
+        prop = kp * error;
+        rightSpeed = maxSpeed - prop;
+        leftSpeed = maxSpeed;
+      } else {
+        digitalWrite(redLED, HIGH);       //turn on red LED
+        error = min(sensors.lidar_left - 15, 10);
+        prop = kp * error;
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed - prop;
+      }
+      break;
+    case RIGHT_WALL:
+      if (sensors.lidar_right >= 10 && sensors.lidar_right <= 15){
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed; 
+      } else if (sensors.lidar_right < 10) {
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+        error = min(10 - sensors.lidar_right, 10);
+        prop = kp * error;
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed - prop;
+      } else {
+        digitalWrite(redLED, HIGH);       //turn on red LED
+        error = min(sensors.lidar_right - 15, 10);
+        prop = kp * error;
+        rightSpeed = maxSpeed - prop;
+        leftSpeed = maxSpeed;
+      }
+      break;
+    case CENTER_WALL:
+      y = sensors.lidar_left - sensors.lidar_right;
+
+      if (y >= -3 && y <= 3) {
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed;
+      } else if (y > 3) {
+        rightSpeed = maxSpeed;
+        leftSpeed = maxSpeed/2;
+      } else {
+        rightSpeed = maxSpeed/2;
+        leftSpeed = maxSpeed;
+      }
+      break;
+  }
+
+  if (sensors.lidar_front < 15) {
+    if (wallSide == LEFT_WALL) {
+      collide();
+      delay(1000);
+      spin(90, 1);
+    } else {
+      collide();
+      delay(1000);
+      spin(90, 0);
+    }
   }
 
   stepperRight.setSpeed(rightSpeed);  //set right motor speed
@@ -870,7 +980,7 @@ void loopM7() {
   //Uncomment to read Encoder Data (uncomment to read on serial monitor)
   // print_encoder_data();   //prints encoder data
 
-  wallFollowBB();
+  wallFollowProp();
 
   //delay(wait_time);               //wait to move robot or read data
 }
