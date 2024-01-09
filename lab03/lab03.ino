@@ -209,10 +209,10 @@ void loopM4() {
 
   struct sensor_data data;
 
-  int lidarFrontCurr = read_lidar(8);
-  int lidarBackCurr = read_lidar(9);
-  int lidarLeftCurr = read_lidar(10);
-  int lidarRightCurr = read_lidar(11);
+  float lidarFrontCurr = read_lidar(8);
+  float lidarBackCurr = read_lidar(9);
+  float lidarLeftCurr = read_lidar(10);
+  float lidarRightCurr = read_lidar(11);
   
   frontLidarArr = shiftArray(frontLidarArr, 6, lidarFrontCurr);
   backLidarArr = shiftArray(backLidarArr, 6, lidarBackCurr);
@@ -224,8 +224,8 @@ void loopM4() {
   data.lidar_left = movingAverage(leftLidarArr, 6);
   data.lidar_right = movingAverage(rightLidarArr, 6);
 
-  // int sonarLeftCurr = readSonar(SONAR_LEFT);
-  // int sonarRightCurr = readSonar(SONAR_RIGHT);
+  // float sonarLeftCurr = readSonar(SONAR_LEFT);
+  // float sonarRightCurr = readSonar(SONAR_RIGHT);
 
   // leftSonarArr = shiftArray(leftSonarArr, SONAR_ARR_SIZE, sonarLeftCurr);
   // rightSonarArr = shiftArray(rightSonarArr, SONAR_ARR_SIZE, sonarRightCurr);
@@ -275,9 +275,9 @@ void init_stepper() {
   digitalWrite(ylwLED, LOW);                    //turn off yellow LED
   digitalWrite(grnLED, LOW);                    //turn off green LED
 
-  stepperRight.setMaxSpeed(500);              //set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
+  stepperRight.setMaxSpeed(1000);              //set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
   stepperRight.setAcceleration(500);          //set desired acceleration in steps/s^2
-  stepperLeft.setMaxSpeed(500);               //set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
+  stepperLeft.setMaxSpeed(1000);               //set the maximum permitted speed limited by processor and clock speed, no greater than 4000 steps/sec on Arduino
   stepperLeft.setAcceleration(500);           //set desired acceleration in steps/s^2
   steppers.addStepper(stepperRight);           //add right motor to MultiStepper
   steppers.addStepper(stepperLeft);            //add left motor to MultiStepper
@@ -394,6 +394,8 @@ void turn(int time, int dir) {
   }
 
   runToStop();  //run until the robot reaches the target
+  stepperRight.setMaxSpeed(1000);
+  stepperLeft.setMaxSpeed(1000);
   init_stepper();
 }
 
@@ -832,22 +834,22 @@ void wallFollowBB(void) {
 }
 
 float prop = 0;
-void wallFollowProp(void) {
-  int maxSpeed = 300;
+void wallFollowP(void) {
+  int maxSpeed = 200;
   int frontTurnDist = 15;
   int rightSpeed;
   int leftSpeed;
   int x = 0;
   int y = 0;
   int error = 0;
-  float kp = 15;
+  float kp = 3;
 
   sensors = RPC.call("read_sensors").as<struct sensor_data>();
 
-  Serial.print("left = ");
-  Serial.print(sensors.lidar_left);
-  Serial.print(" right = ");
-  Serial.println(sensors.lidar_right);
+  // Serial.print("Sonar left = ");
+  // Serial.print(sensors.sonar_left);
+  // Serial.print("Sonar right = ");
+  // Serial.println(sensors.sonar_right);
 
   if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
     wallSide = CENTER_WALL;
@@ -866,57 +868,51 @@ void wallFollowProp(void) {
       if (sensors.lidar_left >= 10 && sensors.lidar_left <= 15){
         digitalWrite(redLED, LOW);       //turn off red LED
         digitalWrite(ylwLED, LOW);       //turn off yellow LED
-        rightSpeed = maxSpeed;
-        leftSpeed = maxSpeed; 
       } else if (sensors.lidar_left <= 10) {
-        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
-        error = min(10 - sensors.lidar_left, 10);
-        prop = kp * error;
-        rightSpeed = maxSpeed - prop;
-        leftSpeed = maxSpeed;
+        digitalWrite(ylwLED, HIGH);      //turn on yellow LED
       } else {
-        digitalWrite(redLED, HIGH);       //turn on red LED
-        error = min(sensors.lidar_left - 15, 10);
-        prop = kp * error;
-        rightSpeed = maxSpeed;
-        leftSpeed = maxSpeed - prop;
+        digitalWrite(redLED, HIGH);      //turn on red LED
       }
+
+      error = min(sensors.lidar_left - 12.5, 12);
+
+      prop = kp * error;
+      rightSpeed = maxSpeed + prop;
+      leftSpeed = maxSpeed - prop;
       break;
     case RIGHT_WALL:
       if (sensors.lidar_right >= 10 && sensors.lidar_right <= 15){
         digitalWrite(redLED, LOW);       //turn off red LED
-        digitalWrite(ylwLED, LOW);       //turn off yellow LED
-        rightSpeed = maxSpeed;
-        leftSpeed = maxSpeed; 
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED 
       } else if (sensors.lidar_right < 10) {
         digitalWrite(ylwLED, HIGH);       //turn on yellow LED
-        error = min(10 - sensors.lidar_right, 10);
-        prop = kp * error;
-        rightSpeed = maxSpeed;
-        leftSpeed = maxSpeed - prop;
       } else {
         digitalWrite(redLED, HIGH);       //turn on red LED
-        error = min(sensors.lidar_right - 15, 10);
-        prop = kp * error;
-        rightSpeed = maxSpeed - prop;
-        leftSpeed = maxSpeed;
       }
+
+      error = min(sensors.lidar_right - 12.5, 12);
+
+      prop = kp * error;
+      rightSpeed = maxSpeed - prop;
+      leftSpeed = maxSpeed + prop;
       break;
     case CENTER_WALL:
       y = sensors.lidar_left - sensors.lidar_right;
 
       if (y >= -3 && y <= 3) {
+        digitalWrite(redLED, HIGH);       //turn on red LED
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+        digitalWrite(grnLED, HIGH);       //turn on green LED
+      } else {
         digitalWrite(redLED, LOW);       //turn off red LED
         digitalWrite(ylwLED, LOW);       //turn off yellow LED
-        rightSpeed = maxSpeed;
-        leftSpeed = maxSpeed;
-      } else if (y > 3) {
-        rightSpeed = maxSpeed;
-        leftSpeed = maxSpeed/2;
-      } else {
-        rightSpeed = maxSpeed/2;
-        leftSpeed = maxSpeed;
+        digitalWrite(grnLED, LOW);       //turn off green LED
       }
+
+      error = min(y, 12);
+      prop = kp * error;
+      rightSpeed = maxSpeed + prop;
+      leftSpeed = maxSpeed - prop;
       break;
   }
 
@@ -932,9 +928,124 @@ void wallFollowProp(void) {
     }
   }
 
+  Serial.print("left = ");
+  Serial.print(leftSpeed);
+  Serial.print(" right = ");
+  Serial.println(rightSpeed);
+
   stepperRight.setSpeed(rightSpeed);  //set right motor speed
   stepperLeft.setSpeed(leftSpeed);   //set left motor speed
-  runAtSpeed();
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();  
+}
+
+float pd = 0;
+float lastError = 0;
+void wallFollowPD(void) {
+  int maxSpeed = -200;
+  int frontTurnDist = 15;
+  int rightSpeed;
+  int leftSpeed;
+  float x = 0;
+  float y = 0;
+  float error = 0;
+  float kp = 3;
+  float kd = 0;
+  float kp_back = 5;
+
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  // Serial.print("Sonar left = ");
+  // Serial.print(sensors.sonar_left);
+  Serial.print("back = ");
+  Serial.print(sensors.lidar_back);
+
+  if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
+    wallSide = CENTER_WALL;
+  } else if (sensors.lidar_left < 30) {
+    wallSide = LEFT_WALL;
+  } else if (sensors.lidar_right < 30) {
+    wallSide = RIGHT_WALL;
+  }
+
+  switch(wallSide) {
+    case NO_WALL:
+      rightSpeed = 0;
+      leftSpeed = 0;
+      break;
+    case LEFT_WALL:
+      if (sensors.lidar_left >= 10 && sensors.lidar_left <= 15){
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+      } else if (sensors.lidar_left <= 10) {
+        digitalWrite(ylwLED, HIGH);      //turn on yellow LED
+      } else {
+        digitalWrite(redLED, HIGH);      //turn on red LED
+      }
+
+      error = min(sensors.lidar_left - 12.5, 12);
+
+      pd = kp * error + kd * (error - lastError);
+
+      if (sensors.lidar_back <= 30) {
+        pd -= kp_back * (30 - sensors.lidar_back);
+      }
+
+      rightSpeed = maxSpeed - pd;
+      leftSpeed = maxSpeed + pd;
+      break;
+    case RIGHT_WALL:
+      if (sensors.lidar_right >= 10 && sensors.lidar_right <= 15){
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED 
+      } else if (sensors.lidar_right < 10) {
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+      } else {
+        digitalWrite(redLED, HIGH);       //turn on red LED
+      }
+
+      error = min(sensors.lidar_right - 12.5, 12);
+
+      pd = kp * error + kd * (error - lastError);
+
+      if (sensors.lidar_back <= 30) {
+        pd -= kp_back * (30 - sensors.lidar_back);
+      }
+
+      rightSpeed = maxSpeed + pd;
+      leftSpeed = maxSpeed - pd;
+      break;
+    case CENTER_WALL:
+      y = sensors.lidar_left - sensors.lidar_right;
+
+      if (y >= -3 && y <= 3) {
+        digitalWrite(redLED, HIGH);       //turn on red LED
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+        digitalWrite(grnLED, HIGH);       //turn on green LED
+      } else {
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+        digitalWrite(grnLED, LOW);       //turn off green LED
+      }
+
+      error = min(y, 12);
+      pd = kp * error + kd * (error - lastError);;
+      rightSpeed = maxSpeed + pd;
+      leftSpeed = maxSpeed - pd;
+      break;
+  }
+
+  Serial.print("left = ");
+  Serial.print(leftSpeed);
+  Serial.print(" right = ");
+  Serial.println(rightSpeed);
+
+  stepperRight.setSpeed(rightSpeed);  //set right motor speed
+  stepperLeft.setSpeed(leftSpeed);   //set left motor speed
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();  
+
+  lastError = error;
 }
 
 void setup() {
@@ -963,10 +1074,7 @@ void setupM7() {
 
   for (int i = 0; i<numOfSens;i++){
     pinMode(lidar_pins[i],INPUT);
-  }
-  pinMode(3, INPUT);
-  pinMode(4, INPUT);
-  
+  }  
 
   Serial.begin(baudrate);  //start serial monitor communication
 
@@ -980,7 +1088,7 @@ void loopM7() {
   //Uncomment to read Encoder Data (uncomment to read on serial monitor)
   // print_encoder_data();   //prints encoder data
 
-  wallFollowProp();
+  wallFollowPD();
 
   //delay(wait_time);               //wait to move robot or read data
 }
