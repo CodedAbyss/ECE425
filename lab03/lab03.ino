@@ -73,6 +73,10 @@ int* rightLidarArr = new int[6];
 int* leftSonarArr = new int[SONAR_ARR_SIZE];
 int* rightSonarArr = new int[SONAR_ARR_SIZE];
 
+// Bool to determine whether to count encoder ticks
+bool countTicksL = true;
+bool countTicksR = false;
+
 //state LEDs connections
 #define redLED 5            //red LED for displaying states
 #define grnLED 6            //green LED for displaying states
@@ -240,12 +244,16 @@ void loopM4() {
 
 //interrupt function to count left encoder tickes
 void LwheelSpeed() {
-  encoder[LEFT]++;  //count the right wheel encoder interrupts
+  if (countTicksL) {
+    encoder[LEFT]++;  //count the right wheel encoder interrupts
+  }
 }
 
 //interrupt function to count right encoder ticks
 void RwheelSpeed() {
-  encoder[RIGHT]++;  //count the right wheel encoder interrupts
+  if (countTicksR) {
+    encoder[RIGHT]++;  //count the right wheel encoder interrupts
+  }
 }
 
 void allOFF() {
@@ -449,11 +457,56 @@ uint16_t readSonar(uint16_t side) {
   return distance;
 }
 
+void goToAngle(int angle) {
+  //A wheel travels 27.5cm per revolution
+  //A wheel travels 69.1cm per 360 spin
+  //There are 800 steps per wheel revolution (quarter stepping)
+  //69.1/27.5*800 = 2010.6 steps per 360 spin
+
+  digitalWrite(grnLED, HIGH);   //turn on green LED
+
+  if (angle == 0) {
+    return;
+  }
+
+  countTicksL = true;
+  countTicksR = true;
+
+  int eCounts = abs(angle / 3.45);
+  int speed = 100;
+
+  if (angle < 0) {
+    stepperLeft.setSpeed(speed);  //set left motor speed
+    stepperRight.setSpeed(-speed);  //set right motor speed
+    Serial.println("neg");
+  } else {
+    stepperLeft.setSpeed(-speed);  //set left motor speed
+    stepperRight.setSpeed(speed);  //set right motor speed
+    Serial.println("pos");
+  }
+
+  while (encoder[RIGHT] - eCounts <= 0 || encoder[LEFT] - eCounts <= 0) {
+    stepperRight.runSpeed();
+    stepperLeft.runSpeed();
+
+    // Serial.print("Right Encoder: ");
+    // Serial.print(encoder[RIGHT]);
+    // Serial.print(" ");
+    // Serial.print("Left Encoder: ");
+    // Serial.println(encoder[LEFT]);
+  }
+
+  encoder[RIGHT] = 0;
+  encoder[LEFT] = 0;
+
+  digitalWrite(grnLED, LOW);       //turn off green LED
+}
+
 void randomWander() {
   digitalWrite(grnLED, HIGH);      //turn on green LED
 
-    stepperRight.setSpeed(300);  //set right motor speed
-    stepperLeft.setSpeed(300);   //set left motor speed
+    stepperRight.setSpeed(-300);  //set right motor speed
+    stepperLeft.setSpeed(-300);   //set left motor speed
 
   if (millis() - wanderTimer > WANDER_TIME) {
     spin(random(30, 180), random(0,2));  
@@ -750,7 +803,9 @@ void smartFollow(void) {
 #define LEFT_WALL 1
 #define RIGHT_WALL 2
 #define CENTER_WALL 3
-int wallSide = NO_WALL;
+#define LOST_WALL 4
+#define RANDOM_WANDER 5
+#define BACK_WALL 6
 void wallFollowBB(void) {
   int maxSpeed = 300;
   int rightSpeed;
@@ -766,14 +821,14 @@ void wallFollowBB(void) {
   Serial.println(sensors.lidar_right);
 
   if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
-    wallSide = CENTER_WALL;
+    state = CENTER_WALL;
   } else if (sensors.lidar_left < 30) {
-    wallSide = LEFT_WALL;
+    state = LEFT_WALL;
   } else if (sensors.lidar_right < 30) {
-    wallSide = RIGHT_WALL;
+    state = RIGHT_WALL;
   }
 
-  switch(wallSide) {
+  switch(state) {
     case NO_WALL:
       rightSpeed = 0;
       leftSpeed = 0;
@@ -826,6 +881,9 @@ void wallFollowBB(void) {
         leftSpeed = maxSpeed;
       }
       break;
+    case RANDOM_WANDER:
+      randomWander();
+      break;
   }
 
   stepperRight.setSpeed(rightSpeed);  //set right motor speed
@@ -852,14 +910,14 @@ void wallFollowP(void) {
   // Serial.println(sensors.sonar_right);
 
   if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
-    wallSide = CENTER_WALL;
+    state = CENTER_WALL;
   } else if (sensors.lidar_left < 30) {
-    wallSide = LEFT_WALL;
+    state = LEFT_WALL;
   } else if (sensors.lidar_right < 30) {
-    wallSide = RIGHT_WALL;
+    state = RIGHT_WALL;
   }
 
-  switch(wallSide) {
+  switch(state) {
     case NO_WALL:
       rightSpeed = 0;
       leftSpeed = 0;
@@ -917,7 +975,7 @@ void wallFollowP(void) {
   }
 
   if (sensors.lidar_front < 15) {
-    if (wallSide == LEFT_WALL) {
+    if (state == LEFT_WALL) {
       collide();
       delay(1000);
       spin(90, 1);
@@ -943,97 +1001,77 @@ float pd = 0;
 float lastError = 0;
 void wallFollowPD(void) {
   int maxSpeed = -200;
-  int frontTurnDist = 15;
+  int frontTurnDist = 10;
   int rightSpeed;
   int leftSpeed;
   float x = 0;
   float y = 0;
   float error = 0;
-  float kp = 3;
-  float kd = 0;
-  float kp_back = 5;
+  float kp = 20;
+  float kd = 1;
+  float kp_back = 200;
 
   sensors = RPC.call("read_sensors").as<struct sensor_data>();
 
-  // Serial.print("Sonar left = ");
-  // Serial.print(sensors.sonar_left);
-  Serial.print("back = ");
-  Serial.print(sensors.lidar_back);
-
   if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
-    wallSide = CENTER_WALL;
+    state = CENTER_WALL;
   } else if (sensors.lidar_left < 30) {
-    wallSide = LEFT_WALL;
+    state = LEFT_WALL;
   } else if (sensors.lidar_right < 30) {
-    wallSide = RIGHT_WALL;
+    state = RIGHT_WALL;
   }
 
-  switch(wallSide) {
+  lightState(state, sensors);
+
+  switch(state) {
     case NO_WALL:
       rightSpeed = 0;
       leftSpeed = 0;
       break;
     case LEFT_WALL:
-      if (sensors.lidar_left >= 10 && sensors.lidar_left <= 15){
-        digitalWrite(redLED, LOW);       //turn off red LED
-        digitalWrite(ylwLED, LOW);       //turn off yellow LED
-      } else if (sensors.lidar_left <= 10) {
-        digitalWrite(ylwLED, HIGH);      //turn on yellow LED
-      } else {
-        digitalWrite(redLED, HIGH);      //turn on red LED
-      }
-
       error = min(sensors.lidar_left - 12.5, 12);
 
       pd = kp * error + kd * (error - lastError);
 
-      if (sensors.lidar_back <= 30) {
-        pd -= kp_back * (30 - sensors.lidar_back);
+      if (sensors.lidar_back <= frontTurnDist) {
+        pd -= kp_back * (frontTurnDist - sensors.lidar_back);
       }
 
       rightSpeed = maxSpeed - pd;
       leftSpeed = maxSpeed + pd;
       break;
     case RIGHT_WALL:
-      if (sensors.lidar_right >= 10 && sensors.lidar_right <= 15){
-        digitalWrite(redLED, LOW);       //turn off red LED
-        digitalWrite(ylwLED, LOW);       //turn off yellow LED 
-      } else if (sensors.lidar_right < 10) {
-        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
-      } else {
-        digitalWrite(redLED, HIGH);       //turn on red LED
-      }
-
       error = min(sensors.lidar_right - 12.5, 12);
 
       pd = kp * error + kd * (error - lastError);
 
-      if (sensors.lidar_back <= 30) {
-        pd -= kp_back * (30 - sensors.lidar_back);
+      if (sensors.lidar_back <= frontTurnDist) {
+        pd -= kp_back * (frontTurnDist - sensors.lidar_back);
       }
 
       rightSpeed = maxSpeed + pd;
       leftSpeed = maxSpeed - pd;
       break;
     case CENTER_WALL:
-      y = sensors.lidar_left - sensors.lidar_right;
+      error = sensors.lidar_left - sensors.lidar_right;
+      Serial.print("error = ");
+      Serial.print(error);
 
-      if (y >= -3 && y <= 3) {
-        digitalWrite(redLED, HIGH);       //turn on red LED
-        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
-        digitalWrite(grnLED, HIGH);       //turn on green LED
+      if (abs(error) <= 3) {
+        pd = 0;
       } else {
-        digitalWrite(redLED, LOW);       //turn off red LED
-        digitalWrite(ylwLED, LOW);       //turn off yellow LED
-        digitalWrite(grnLED, LOW);       //turn off green LED
+        pd = kp * error + kd * (error - lastError);
       }
 
-      error = min(y, 12);
-      pd = kp * error + kd * (error - lastError);;
-      rightSpeed = maxSpeed + pd;
-      leftSpeed = maxSpeed - pd;
+      rightSpeed = maxSpeed - pd;
+      leftSpeed = maxSpeed + pd;
       break;
   }
+
+  // Serial.print("Sonar left = ");
+  // Serial.print(sensors.sonar_left);
+  // Serial.print("back = ");
+  // Serial.print(sensors.lidar_back);
 
   Serial.print("left = ");
   Serial.print(leftSpeed);
@@ -1046,6 +1084,321 @@ void wallFollowPD(void) {
   stepperLeft.runSpeed();  
 
   lastError = error;
+}
+
+bool timerStarted = false;
+int wallTimer = 0;
+void wallFollowStates (void) {
+  int maxSpeed = -200;
+  int frontTurnDist = 10;
+  int rightSpeed;
+  int leftSpeed;
+  float x = 0;
+  float y = 0;
+  float error = 0;
+  float kp = 20;
+  float kd = 1;
+  float kp_back = 200;
+  int lostTimer = 0;
+
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
+    state = CENTER_WALL;
+    wallTimer = millis();
+  } else if (sensors.lidar_left < 40) {
+    state = LEFT_WALL;
+    wallTimer = millis();
+  } else if (sensors.lidar_right < 40) {
+    state = RIGHT_WALL;
+    wallTimer = millis();
+  } else { 
+    if (millis() - 4000 > wallTimer) {
+      state = RANDOM_WANDER;
+    }
+  }
+
+  lightState(state, sensors);
+
+  switch(state) {
+    case NO_WALL:
+      rightSpeed = 0;
+      leftSpeed = 0;
+      break;
+    case LEFT_WALL:
+      error = min(sensors.lidar_left - 12.5, 12);
+
+      pd = kp * error + kd * (error - lastError);
+
+      if (sensors.lidar_back <= frontTurnDist) {
+        pd -= kp_back * (frontTurnDist - sensors.lidar_back);
+      }
+
+      rightSpeed = maxSpeed - pd;
+      leftSpeed = maxSpeed + pd;
+      break;
+    case RIGHT_WALL:
+      error = min(sensors.lidar_right - 12.5, 12);
+
+      pd = kp * error + kd * (error - lastError);
+
+      if (sensors.lidar_back <= frontTurnDist) {
+        pd -= kp_back * (frontTurnDist - sensors.lidar_back);
+      }
+
+      rightSpeed = maxSpeed + pd;
+      leftSpeed = maxSpeed - pd;
+      break;
+    case CENTER_WALL:
+      error = sensors.lidar_left - sensors.lidar_right;
+      Serial.print("error = ");
+      Serial.print(error);
+
+      if (abs(error) <= 3) {
+        pd = 0;
+      } else {
+        pd = kp * error + kd * (error - lastError);
+      }
+
+      rightSpeed = maxSpeed - pd;
+      leftSpeed = maxSpeed + pd;
+      break;
+    case RANDOM_WANDER:
+      randomWander();
+      if (sensors.lidar_back < 10) {
+        spin(90, 0);
+      }
+      break;
+  }
+
+  // Serial.print("Sonar left = ");
+  // Serial.print(sensors.sonar_left);
+  // Serial.print("back = ");
+  // Serial.print(sensors.lidar_back);
+
+  Serial.print("left = ");
+  Serial.print(leftSpeed);
+  Serial.print(" right = ");
+  Serial.println(rightSpeed);
+
+  stepperRight.setSpeed(rightSpeed);  //set right motor speed
+  stepperLeft.setSpeed(leftSpeed);   //set left motor speed
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();  
+
+  lastError = error;
+}
+
+#define NO_OBSTACLE 0
+#define SIDE_1 1
+#define SIDE_2 2
+#define SIDE_3 3
+#define POST_OBSTACLE 4
+
+int gtgWall = 0;
+int gtgState = NO_OBSTACLE;
+bool hasTurned = false;
+void goToGoalAvoidObs(int x, int y) {
+
+  int angle;
+
+  angle = atan2(y, x)*180/3.1415;
+
+  // Serial.println("Angle: ");
+  // Serial.println(angle);
+
+  goToAngle(angle);
+  delay(1000);
+  digitalWrite(grnLED, LOW);       //turn off green LED
+
+  double distance = sqrt(pow(x,2) + pow(y,2));
+
+  // Serial.println("Dist: ");
+  // Serial.println(distance);
+
+  int eCounts = distance / 10.8 * 40;
+
+  Serial.print("eCount: ");
+  Serial.println(eCounts);
+
+  int speed = -300;
+
+  int turnDelay = 4000;
+  int changeStateDelay = 10000;
+  int turnTimer = 0;
+
+  int obsCount = 0;
+
+  countTicksR = false;
+  encoder[LEFT] = 0;
+  encoder[RIGHT] = 0;
+
+  while (eCounts - encoder[LEFT] >= 0) {
+    sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+    Serial.print("Ecounts Left: ");
+    Serial.println(eCounts - encoder[LEFT]);
+
+    if (sensors.lidar_back < 10 && gtgState == NO_OBSTACLE){
+      gtgState = SIDE_1;
+      hasTurned = false;
+    } else if (sensors.lidar_right > 40 && sensors.lidar_left > 40 && gtgState == SIDE_1) {
+      gtgState = SIDE_2;
+      turnTimer = millis();
+      hasTurned = false;
+    } else if (sensors.lidar_right > 40 && sensors.lidar_left > 40 && millis() - turnTimer > changeStateDelay && gtgState == SIDE_2) {
+      gtgState = SIDE_3;
+      turnTimer = millis();
+      hasTurned = false;
+    } else if (obsCount*2 <= encoder[RIGHT] && gtgState == SIDE_3) {
+      gtgState = POST_OBSTACLE;
+      hasTurned = false;
+    }
+
+    if(sensors.lidar_right < 40) {
+      gtgWall = RIGHT_WALL;
+    } else if (sensors.lidar_left < 40) {
+      gtgWall = LEFT_WALL;
+    }
+
+    if (gtgState == NO_OBSTACLE) {
+      Serial.println("State: NO_OBSTACLE");
+      countTicksL == true;
+    }
+
+    if (gtgState == SIDE_1) {
+      Serial.println("State: SIDE_1");
+      countTicksL = false;
+      if (!hasTurned) {
+        if (gtgWall == LEFT_WALL) {
+          spin(90, 0);
+        } else {
+          spin(90, 1);
+        }
+        hasTurned = true;
+
+        countTicksR = true;
+      }
+    }
+
+    if (gtgState == SIDE_2) {
+      Serial.println("State: SIDE_2");
+      obsCount = encoder[RIGHT];
+
+      Serial.print("ObsCount: ");
+      Serial.println(obsCount);
+      if (!hasTurned && millis() - turnTimer > turnDelay) {
+        countTicksR = false;
+        if (gtgWall == LEFT_WALL) {
+          spin(90, 1);
+        } else {
+          spin(90, 0);
+        }
+        countTicksL = true;
+        hasTurned = true;
+      }
+    }
+
+    if (gtgState == SIDE_3) {
+      Serial.println("State: SIDE_3");
+      if (!hasTurned && millis() - turnTimer > turnDelay) {
+        if (gtgWall == LEFT_WALL) {
+          spin(90, 1);
+        } else {
+          spin(90, 0);
+        }
+        hasTurned = true;
+        countTicksR = true;
+        countTicksL = false;
+      }
+    }
+
+    if (gtgState == POST_OBSTACLE) {
+      Serial.println("State: POST_OBSTACLE");
+      if (!hasTurned) {
+        if (gtgWall == LEFT_WALL) {
+          spin(90, 0);
+        } else {
+          spin(90, 1);
+        }
+        hasTurned = true;
+        countTicksL = true;
+      }
+    }
+
+    stepperLeft.setSpeed(speed);   //set left motor speed
+    stepperRight.setSpeed(speed);  //set right motor speed
+
+    stepperRight.runSpeed();
+    stepperLeft.runSpeed();
+  }
+
+  encoder[RIGHT] = 0;
+  encoder[LEFT] = 0;
+}
+
+void lightState(int lightState, struct sensor_data sensors) {
+
+  switch (lightState) {
+    case NO_WALL:
+      digitalWrite(redLED, LOW);       //turn off red LED
+      digitalWrite(ylwLED, LOW);       //turn off yellow LED
+      digitalWrite(grnLED, LOW);       //turn off green LED
+      break;
+    case LEFT_WALL:
+      if (sensors.lidar_left >= 10 && sensors.lidar_left <= 15){ 
+        digitalWrite(grnLED, HIGH);       //turn on green LED
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+      } else if (sensors.lidar_left <= 10) {
+        digitalWrite(ylwLED, HIGH);      //turn on yellow LED
+        digitalWrite(grnLED, LOW);       //turn off green LED
+        digitalWrite(redLED, LOW);       //turn off red LED
+      } else {
+        digitalWrite(redLED, HIGH);      //turn on red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED 
+        digitalWrite(grnLED, LOW);       //turn off green LED
+      }
+      break;
+    case RIGHT_WALL:
+      if (sensors.lidar_right >= 10 && sensors.lidar_right <= 15){
+        digitalWrite(redLED, HIGH);       //turn on red LED
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED 
+        digitalWrite(grnLED, LOW);       //turn off green LED
+      } else if (sensors.lidar_right < 10) {
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+        digitalWrite(grnLED, LOW);       //turn off green LED
+        digitalWrite(redLED, LOW);       //turn off red LED
+      } else {
+        digitalWrite(redLED, HIGH);       //turn on red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED 
+        digitalWrite(grnLED, LOW);       //turn off green LED
+      }
+      break;
+    case CENTER_WALL:
+      if (sensors.lidar_left - sensors.lidar_right >= -3 && sensors.lidar_left - sensors.lidar_right <= 3) {
+        digitalWrite(redLED, HIGH);       //turn on red LED
+        digitalWrite(ylwLED, HIGH);       //turn on yellow LED
+        digitalWrite(grnLED, HIGH);       //turn on green LED
+      } else {
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+        digitalWrite(grnLED, LOW);       //turn off green LED
+      }
+      break;
+      case RANDOM_WANDER:
+        digitalWrite(redLED, LOW);       //turn off red LED
+        digitalWrite(ylwLED, LOW);       //turn off yellow LED
+        digitalWrite(grnLED, HIGH);       //turn off green LED
+        break;
+  }
+
+  if (sensors.lidar_back <= 18) {
+    digitalWrite(redLED, HIGH);       //turn on red LED
+    digitalWrite(ylwLED, LOW);       //turn off yellow LED
+    digitalWrite(grnLED, HIGH);       //turn on green LED
+  }
+
 }
 
 void setup() {
@@ -1088,7 +1441,9 @@ void loopM7() {
   //Uncomment to read Encoder Data (uncomment to read on serial monitor)
   // print_encoder_data();   //prints encoder data
 
-  wallFollowPD();
+  goToGoalAvoidObs(77, 0);
+
+  delay(5000);
 
   //delay(wait_time);               //wait to move robot or read data
 }
