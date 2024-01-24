@@ -154,8 +154,10 @@ struct sensor_data {
   int lidar_right;
   int sonar_left;
   int sonar_right;
+  int photoresistor_left;
+  int photoresistor_right;
   // this defines some helper functions that allow RPC to send our struct (I found this on a random forum)
-  MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right, sonar_left, sonar_right)
+  MSGPACK_DEFINE_ARRAY(lidar_front, lidar_back, lidar_left, lidar_right, sonar_left, sonar_right, photoresistor_left, photoresistor_right)
 } sensors;
 
 // read_lidars is the function used to get lidar data to the M7
@@ -236,6 +238,9 @@ void loopM4() {
 
   // data.sonar_left = movingAverage(leftSonarArr, SONAR_ARR_SIZE);
   // data.sonar_right = movingAverage(rightSonarArr, SONAR_ARR_SIZE);
+
+  data.photoresistor_left = analogRead(A0);
+  data.photoresistor_right = analogRead(A1);
 
   sensors = data;
 }
@@ -457,10 +462,6 @@ uint16_t readSonar(uint16_t side) {
   return distance;
 }
 
-/*
-goToAngle rotates the robot to a specified angle
-*/
-
 void goToAngle(int angle) {
   //A wheel travels 27.5cm per revolution
   //A wheel travels 69.1cm per 360 spin
@@ -506,11 +507,6 @@ void goToAngle(int angle) {
   digitalWrite(grnLED, LOW);       //turn off green LED
 }
 
-/*
-randomWander spins the robot to a random angle then moves it a random amount of
-steps forward
-*/
-
 void randomWander() {
   digitalWrite(grnLED, HIGH);      //turn on green LED
 
@@ -536,10 +532,6 @@ void randomWander() {
 
 }
 
-/*
-collide stops the robot when an object is in front of it
-*/
-
 void collide(void) {
   stepperRight.setSpeed(500);  //set right motor speed
   stepperLeft.setSpeed(500);   //set left motor speed  
@@ -559,10 +551,6 @@ void collide(void) {
     // Serial.println("run");
   }
 }
-
-/*
-runaway avoids all obstacles around the robot
-*/
 
 void runaway(void) {
   int maxSpeed = 300;
@@ -658,10 +646,6 @@ void runaway(void) {
 
   runAtSpeed(); 
 }
-
-/*
-follow follows an object that is in front of the robot
-*/
 
 void follow(void) {
   digitalWrite(redLED, HIGH);       //turn on red LED
@@ -820,10 +804,6 @@ void smartFollow(void) {
   }
 }
 
-/*
-wallFollowBB implements bang bang control in order to follow a wall
-*/
-
 #define NO_WALL 0
 #define LEFT_WALL 1
 #define RIGHT_WALL 2
@@ -915,10 +895,6 @@ void wallFollowBB(void) {
   stepperLeft.setSpeed(leftSpeed);   //set left motor speed
   runAtSpeed();
 }
-
-/*
-wallFollowP implements proportional control in order to follow a wall
-*/
 
 float prop = 0;
 void wallFollowP(void) {
@@ -1026,14 +1002,11 @@ void wallFollowP(void) {
   stepperLeft.runSpeed();  
 }
 
-/*
-wallFollowPD implements proportional/derivative control in order to follow a wall
-*/
-
 float pd = 0;
 float lastError = 0;
+bool loved = false;
 void wallFollowPD(void) {
-  int maxSpeed = -200;
+  int maxSpeed = -300;
   int frontTurnDist = 10;
   int rightSpeed;
   int leftSpeed;
@@ -1046,12 +1019,14 @@ void wallFollowPD(void) {
 
   sensors = RPC.call("read_sensors").as<struct sensor_data>();
 
-  if (sensors.lidar_left < 30 && sensors.lidar_right < 30) {
-    state = CENTER_WALL;
-  } else if (sensors.lidar_left < 30) {
-    state = LEFT_WALL;
-  } else if (sensors.lidar_right < 30) {
-    state = RIGHT_WALL;
+  if (!loved) {
+    if (sensors.lidar_left < 15 && sensors.lidar_right < 15) {
+      state = CENTER_WALL;
+    } else if (sensors.lidar_left < 30) {
+      state = LEFT_WALL;
+    } else if (sensors.lidar_right < 30) {
+      state = RIGHT_WALL;
+    }
   }
 
   lightState(state, sensors);
@@ -1106,10 +1081,10 @@ void wallFollowPD(void) {
   // Serial.print("back = ");
   // Serial.print(sensors.lidar_back);
 
-  Serial.print("left = ");
-  Serial.print(leftSpeed);
-  Serial.print(" right = ");
-  Serial.println(rightSpeed);
+  // Serial.print("left = ");
+  // Serial.print(leftSpeed);
+  // Serial.print(" right = ");
+  // Serial.println(rightSpeed);
 
   stepperRight.setSpeed(rightSpeed);  //set right motor speed
   stepperLeft.setSpeed(leftSpeed);   //set left motor speed
@@ -1119,11 +1094,6 @@ void wallFollowPD(void) {
   lastError = error;
 }
 
-/*
-wallFollowStates implements PD control in order to follow a wall, along with
-random wander when all walls are lost, and avoid when the robot gets too
-close to a wall
-*/
 
 bool timerStarted = false;
 int wallTimer = 0;
@@ -1227,10 +1197,6 @@ void wallFollowStates (void) {
 
   lastError = error;
 }
-
-/*
-goToGoalAvoidObs goes to a specific goal location while being able to avoid objects in its path
-*/
 
 #define NO_OBSTACLE 0
 #define SIDE_1 1
@@ -1369,10 +1335,6 @@ void goToGoalAvoidObs(int x, int y) {
       }
     }
 
-    if (sensors.lidar_left < 2 && sensors.lidar_right < 2) {
-    runaway();
-    }
-
     stepperLeft.setSpeed(speed);   //set left motor speed
     stepperRight.setSpeed(speed);  //set right motor speed
 
@@ -1383,10 +1345,6 @@ void goToGoalAvoidObs(int x, int y) {
   encoder[RIGHT] = 0;
   encoder[LEFT] = 0;
 }
-
-/*
-lightState updates the leds on the robot
-*/
 
 void lightState(int lightState, struct sensor_data sensors) {
 
@@ -1452,6 +1410,172 @@ void lightState(int lightState, struct sensor_data sensors) {
 
 }
 
+void fear(void) {
+  digitalWrite(redLED, HIGH);       //turn on red LED
+  digitalWrite(ylwLED, HIGH);       //turn on yellow LED 
+  digitalWrite(grnLED, HIGH);       //turn on green LED
+
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  int rightSpeed = 0;
+  int leftSpeed = 0;
+
+  if (sensors.photoresistor_right > 950) {
+    rightSpeed = -4* (sensors.photoresistor_right - 950);
+  }
+  if (sensors.photoresistor_left > 950) {
+    leftSpeed = -4 * (sensors.photoresistor_left - 950);
+  }
+  
+
+  stepperLeft.setSpeed(leftSpeed);   //set left motor speed
+  stepperRight.setSpeed(rightSpeed);  //set right motor speed
+
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
+}
+
+void aggression(void) {
+  digitalWrite(redLED, HIGH);       //turn on red LED
+  digitalWrite(ylwLED, HIGH);       //turn off yellow LED 
+  digitalWrite(grnLED, LOW);       //turn on green LED
+
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  int rightSpeed = -200;
+  int leftSpeed = -200;
+
+  if (sensors.photoresistor_right > 950) {
+    rightSpeed += 4 * (sensors.photoresistor_right - 950);
+  }
+  if (sensors.photoresistor_left > 950) {
+    leftSpeed += 4 * (sensors.photoresistor_left - 950);
+  }
+  
+
+  stepperLeft.setSpeed(leftSpeed);   //set left motor speed
+  stepperRight.setSpeed(rightSpeed);  //set right motor speed
+
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
+}
+
+void love(void) {
+  digitalWrite(redLED, HIGH);       //turn on red LED
+  digitalWrite(ylwLED, LOW);       //turn off yellow LED 
+  digitalWrite(grnLED, HIGH);       //turn on green LED
+
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  int rightSpeed = 0;
+  int leftSpeed = 0;
+
+  // Serial.print("Left Sensor: ");
+  // Serial.print(sensors.photoresistor_left);
+  // Serial.print("   ");
+  // Serial.print("Right Sensor: ");
+  // Serial.println(sensors.photoresistor_right);
+
+  if (sensors.photoresistor_left > 800) {
+    rightSpeed = -2* (sensors.photoresistor_left - 800);
+  }
+  if (sensors.photoresistor_right > 800) {
+    leftSpeed = -2 * (sensors.photoresistor_right - 800);
+  }
+  
+
+  stepperLeft.setSpeed(leftSpeed);   //set left motor speed
+  stepperRight.setSpeed(rightSpeed);  //set right motor speed
+
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
+}
+
+void explorer(void) {
+  digitalWrite(redLED, HIGH);       //turn on red LED
+  digitalWrite(ylwLED, LOW);       //turn off yellow LED 
+  digitalWrite(grnLED, HIGH);       //turn on green LED
+
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  int rightSpeed = -200;
+  int leftSpeed = -200;
+
+  if (sensors.photoresistor_left > 950) {
+    rightSpeed += 4 * (sensors.photoresistor_left - 950);
+  }
+  if (sensors.photoresistor_right > 950) {
+    leftSpeed += 4 * (sensors.photoresistor_right - 950);
+  }
+  
+
+  stepperLeft.setSpeed(leftSpeed);   //set left motor speed
+  stepperRight.setSpeed(rightSpeed);  //set right motor speed
+
+  stepperRight.runSpeed();
+  stepperLeft.runSpeed();
+}
+
+void loveAvoid(void) {
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  if (sensors.lidar_back < 10 || sensors.lidar_right < 15 || sensors.lidar_left < 15) {
+    runaway();
+  } else {
+    love();
+  }
+}
+
+#define STATE_WALLFOLLOW 0
+#define STATE_LOVE 1
+#define STATE_AFTERLOVE 2
+#define LOVE_LIGHT 900
+int homingState = STATE_WALLFOLLOW;
+void homing(void) {
+  sensors = RPC.call("read_sensors").as<struct sensor_data>();
+
+  Serial.print("Left Sensor: ");
+  Serial.print(sensors.photoresistor_left);
+  Serial.print("   ");
+  Serial.print("Right Sensor: ");
+  Serial.print(sensors.photoresistor_right);
+
+  if (homingState == STATE_WALLFOLLOW && !loved && (sensors.photoresistor_right > LOVE_LIGHT || sensors.photoresistor_left > LOVE_LIGHT)) {
+    homingState = STATE_LOVE;
+    loved = true;
+  } else if (homingState == STATE_LOVE && sensors.lidar_back < 10) {
+    homingState = STATE_AFTERLOVE;
+    delay(3000);
+    spin(180, 0);
+  } else if (homingState == STATE_AFTERLOVE && sensors.lidar_back < 10) {
+    if (state == RIGHT_WALL) {
+      spin(135, 1);
+    } else if (state == LEFT_WALL)  {
+      spin(135, 0);
+    }
+    homingState = STATE_WALLFOLLOW;
+  }
+
+  switch (homingState) {
+    case STATE_WALLFOLLOW:
+      wallFollowPD();
+      Serial.println("  State: Wall Follow");
+      break;
+    case STATE_LOVE:
+      love();
+      Serial.println("  State: Love");
+      break;
+    case STATE_AFTERLOVE:
+      stepperLeft.setSpeed(-300);   //set left motor speed
+      stepperRight.setSpeed(-300);  //set right motor speed
+
+      stepperRight.runSpeed();
+      stepperLeft.runSpeed();
+      Serial.println("  State: After Love");
+      break;
+  }
+}
+
 void setup() {
   RPC.begin();
   if(HAL_GetCurrentCPUID() == CM7_CPUID) {
@@ -1492,9 +1616,8 @@ void loopM7() {
   //Uncomment to read Encoder Data (uncomment to read on serial monitor)
   // print_encoder_data();   //prints encoder data
 
-  goToGoalAvoidObs(77, 0);
-
-  delay(5000);
+  // homing();
+  homing();
 
   //delay(wait_time);               //wait to move robot or read data
 }
