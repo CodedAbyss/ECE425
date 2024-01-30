@@ -462,6 +462,9 @@ uint16_t readSonar(uint16_t side) {
   return distance;
 }
 
+/*
+goToAngle rotates the robot to a specified angle
+*/
 void goToAngle(int angle) {
   //A wheel travels 27.5cm per revolution
   //A wheel travels 69.1cm per 360 spin
@@ -507,6 +510,10 @@ void goToAngle(int angle) {
   digitalWrite(grnLED, LOW);       //turn off green LED
 }
 
+/*
+randomWander spins the robot to a random angle then moves it a random amount of
+steps forward
+*/
 void randomWander() {
   digitalWrite(grnLED, HIGH);      //turn on green LED
 
@@ -532,6 +539,9 @@ void randomWander() {
 
 }
 
+/*
+collide stops the robot when an object is in front of it
+*/
 void collide(void) {
   stepperRight.setSpeed(500);  //set right motor speed
   stepperLeft.setSpeed(500);   //set left motor speed  
@@ -552,6 +562,9 @@ void collide(void) {
   }
 }
 
+/*
+runaway avoids all obstacles around the robot
+*/
 void runaway(void) {
   int maxSpeed = 300;
   int rightSpeed;
@@ -647,6 +660,9 @@ void runaway(void) {
   runAtSpeed(); 
 }
 
+/*
+follow follows an object that is in front of the robot
+*/
 void follow(void) {
   digitalWrite(redLED, HIGH);       //turn on red LED
   digitalWrite(grnLED, HIGH);       //turn on green LED
@@ -733,6 +749,9 @@ void follow(void) {
 }
 
 
+/*
+smartWander randomly wanders the robot while avoiding obstacles
+*/
 #define STATE_WANDER 0
 #define STATE_COLLIDE 1
 #define STATE_RUNAWAY 2
@@ -770,6 +789,9 @@ void smartWander(void) {
   }
 }
 
+/*
+smartFollow follows an object that is in front of the robot
+*/
 #define STATE_FOLLOW 3
 void smartFollow(void) {
   sensors = RPC.call("read_sensors").as<struct sensor_data>();
@@ -804,6 +826,9 @@ void smartFollow(void) {
   }
 }
 
+/*
+wallFollowBB implements bang bang control in order to follow a wall
+*/
 #define NO_WALL 0
 #define LEFT_WALL 1
 #define RIGHT_WALL 2
@@ -896,6 +921,9 @@ void wallFollowBB(void) {
   runAtSpeed();
 }
 
+/*
+wallFollowP implements proportional control in order to follow a wall
+*/
 float prop = 0;
 void wallFollowP(void) {
   int maxSpeed = 200;
@@ -1002,6 +1030,9 @@ void wallFollowP(void) {
   stepperLeft.runSpeed();  
 }
 
+/*
+wallFollowPD implements proportional/derivative control in order to follow a wall
+*/
 float pd = 0;
 float lastError = 0;
 bool loved = false;
@@ -1094,7 +1125,11 @@ void wallFollowPD(void) {
   lastError = error;
 }
 
-
+/*
+wallFollowStates implements PD control in order to follow a wall, along with
+random wander when all walls are lost, and avoid when the robot gets too
+close to a wall
+*/
 bool timerStarted = false;
 int wallTimer = 0;
 void wallFollowStates (void) {
@@ -1198,6 +1233,9 @@ void wallFollowStates (void) {
   lastError = error;
 }
 
+/*
+goToGoalAvoidObs goes to a specific goal location while being able to avoid objects in its path
+*/
 #define NO_OBSTACLE 0
 #define SIDE_1 1
 #define SIDE_2 2
@@ -1346,6 +1384,9 @@ void goToGoalAvoidObs(int x, int y) {
   encoder[LEFT] = 0;
 }
 
+/*
+lightState updates the leds on the robot
+*/
 void lightState(int lightState, struct sensor_data sensors) {
 
   switch (lightState) {
@@ -1410,6 +1451,9 @@ void lightState(int lightState, struct sensor_data sensors) {
 
 }
 
+/*
+fear uses the photoresistors to turn the robot away from light when sensed
+*/
 void fear(void) {
   digitalWrite(redLED, HIGH);       //turn on red LED
   digitalWrite(ylwLED, HIGH);       //turn on yellow LED 
@@ -1435,6 +1479,9 @@ void fear(void) {
   stepperLeft.runSpeed();
 }
 
+/*
+aggression uses the photoresistors to turn the robot towards the light 
+*/
 void aggression(void) {
   digitalWrite(redLED, HIGH);       //turn on red LED
   digitalWrite(ylwLED, HIGH);       //turn off yellow LED 
@@ -1460,6 +1507,9 @@ void aggression(void) {
   stepperLeft.runSpeed();
 }
 
+/*
+love uses the photoresistors to turn the robot towards the light when sensed
+*/
 void love(void) {
   digitalWrite(redLED, HIGH);       //turn on red LED
   digitalWrite(ylwLED, LOW);       //turn off yellow LED 
@@ -1491,6 +1541,9 @@ void love(void) {
   stepperLeft.runSpeed();
 }
 
+/*
+explorer uses the photoresistors to turn the robot away from light
+*/
 void explorer(void) {
   digitalWrite(redLED, HIGH);       //turn on red LED
   digitalWrite(ylwLED, LOW);       //turn off yellow LED 
@@ -1516,6 +1569,10 @@ void explorer(void) {
   stepperLeft.runSpeed();
 }
 
+/*
+loveAvoid uses the love behavior, but has obstacle avoidance when the robot gets too close
+to obstacles
+*/
 void loveAvoid(void) {
   sensors = RPC.call("read_sensors").as<struct sensor_data>();
 
@@ -1526,6 +1583,10 @@ void loveAvoid(void) {
   }
 }
 
+/*
+homing utlizes a state machine to have the robot wall follow until a light is sensed,
+then move towards the light, turn 180 degrees, go back to the wall, and wall follow
+*/
 #define STATE_WALLFOLLOW 0
 #define STATE_LOVE 1
 #define STATE_AFTERLOVE 2
